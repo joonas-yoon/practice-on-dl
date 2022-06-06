@@ -1,8 +1,14 @@
 # Auto Encoder
 
-[https://blog.joonas.io/215](https://blog.joonas.io/215)
+**blog post**
 
-## Notebook
+- https://blog.joonas.io/215
+
+**kaggle**
+
+- https://www.kaggle.com/code/joonasyoon/mnist-autoencoder-visualization
+
+**jupyter notebook**
 
 - [AE.ipynb](AE.ipynb)
 

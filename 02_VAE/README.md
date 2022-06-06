@@ -1,8 +1,14 @@
-# Auto Encoder
+# Variational Auto Encoder
 
-[https://blog.joonas.io/216](https://blog.joonas.io/216)
+**blog post**
 
-## Notebook
+- https://blog.joonas.io/216
+
+**kaggle**
+
+- https://www.kaggle.com/code/joonasyoon/mnist-vae-variational-auto-encoder-visualization
+
+**jupyter notebook**
 
 - [VAE.ipynb](VAE.ipynb)
 
