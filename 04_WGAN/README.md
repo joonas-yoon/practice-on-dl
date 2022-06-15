@@ -4,7 +4,7 @@
 
 **paper**
 
-- https://arxiv.org/pdf/1701.07875.pdf
+- Wasserstein GAN - https://arxiv.org/pdf/1701.07875.pdf
 
 **blog post**
 
@@ -17,3 +17,37 @@
 ### Loss graph
 
 ![loss](loss_with_clipping.png)
+
+
+## WGAN-GP
+
+**paper**
+
+- Improved Training of Wasserstein GANs - https://arxiv.org/pdf/1704.00028.pdf
+
+**blog post**
+
+- https://blog.joonas.io/218
+
+**jupyter notebook**
+
+- [WGAN-GP.ipynb](wgan-gp.ipynb)
+
+
+### Loss graph
+
+during train with CelebA dataset
+
+![loss](wgan_gp_loss.png)
+
+### CelebA Dataset
+
+![](wgan_gp%2Bceleba.gif)
+
+![](wgan_gp%2Bceleba.png)
+
+### LSUN Dataset
+
+![](wgan_gp%2Blsun.gif)
+
+![](wgan_gp%2Blsun.png)
