@@ -33,6 +33,9 @@
 
 - [WGAN-GP.ipynb](wgan-gp.ipynb)
 
+**Kaggle**
+
+- https://www.kaggle.com/code/joonasyoon/wgan-gp-with-celeba
 
 ### Loss graph
 
