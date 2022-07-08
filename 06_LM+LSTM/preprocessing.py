@@ -21,7 +21,7 @@ def to_readable_text(text):
 
 
 def read_file(path):
-  with open(path, 'r', encoding='utf-8') as f:
+  with open(path, 'rb', encoding='utf-8') as f:
     text = f.read()
   t = re.sub('\n{4,}', f' {START_TOKEN}\n', text.lower())
   t = re.sub('\.{2,}', '. ', t)
@@ -33,6 +33,6 @@ def read_file(path):
 
 
 def write_file(path, text):
-  with open(path, 'w', encoding='utf-8') as f:
+  with open(path, 'wb', encoding='utf-8') as f:
     f.write(to_readable_text(text))
 
