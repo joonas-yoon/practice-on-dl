@@ -67,150 +67,6 @@ def score_matching_loss(predicted_score, true_data, noisy_data, noise_std):
     return torch.mean((predicted_score - score) ** 2)
 
 
-def train(model: nn.Module,
-          data_loader: DataLoader,
-          optimizer: optim.Optimizer,
-          timesteps=10,
-          noise_std=0.1,
-          epochs=10):
-    model.train()
-
-    progress = tqdm(total=epochs * len(data_loader))
-    step = 0
-    for epoch in range(epochs):
-        for batch_x, batch_y in data_loader:
-            batch_x = batch_x.to(device).view(batch_x.size(0), -1)
-            batch_y = batch_y.to(device).view(batch_y.size(0), -1)
-            optimizer.zero_grad()
-
-            # Forward diffusion process
-            noisy_data_list = forward_diffusion(
-                batch_x, timesteps, noise_std)
-
-            # Reverse process: predict score function for each timestep
-            total_loss = 0
-            for t in range(timesteps):
-                noisy_data = noisy_data_list[t]
-                predicted_score = model(noisy_data)
-
-                loss = score_matching_loss(
-                    predicted_score, batch_x, noisy_data, noise_std)
-                total_loss += loss
-
-            total_loss.backward()
-            optimizer.step()
-
-            # display progress
-            step += 1
-            progress.set_description(
-                f"Step: {step}, Loss: {total_loss.item():.4f}")
-            progress.update(1)
-
-
-def plot_images(original: np.ndarray,
-                noisy_list: list[np.ndarray],
-                reconstructed: np.ndarray,
-                timesteps: int,
-                output_file: str):
-    """
-    Plot the original, noisy (at different timesteps), and reconstructed images.
-
-    Args:
-        original: The original image
-        noisy_list: A list of noisy images at different timesteps
-        reconstructed: The reconstructed image by the model
-        timesteps: Number of timesteps in the diffusion process
-    """
-    fig, axes = plt.subplots(1, timesteps + 2, figsize=(15, 2))
-
-    # Plot original image
-    axes[0].imshow(original.view(28, 28).cpu().numpy(), cmap='gray')
-    axes[0].set_title("Original")
-    axes[0].axis('off')
-
-    # Plot noisy images
-    for i in range(timesteps):
-        data = noisy_list[i].view(28, 28).cpu().numpy()
-        axes[i + 1].imshow(data, cmap='gray')
-        axes[i + 1].set_title(f"{i+1}")
-        axes[i + 1].axis('off')
-
-    # Plot reconstructed image
-    axes[-1].imshow(reconstructed.view(28, 28).cpu().numpy(), cmap='gray')
-    axes[-1].set_title("Reconstructed")
-    axes[-1].axis('off')
-
-    fig.savefig(output_file)
-    plt.close()
-
-
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    if torch.mps.is_available():
-        return torch.device('mps')
-    return torch.device('cpu')
-
-
-device = get_device()
-
-# Define hyperparameters
-input_dim = 28 * 28  # for example, MNIST data flattened
-hidden_dim = 512
-timesteps = 10
-noise_std = 0.1
-epochs = 10
-batch_size = 64
-learning_rate = 0.001
-
-# Instantiate model and optimizer
-model = ReverseDiffusionNet(input_dim, hidden_dim).to(device)
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-
-# Assume data_loader is predefined for your dataset (e.g., MNIST or CIFAR-10)
-train_loader = DataLoader(
-    datasets.MNIST('./mnist', train=True, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=batch_size, shuffle=True)
-
-test_loader = DataLoader(
-    datasets.MNIST('./mnist', train=False, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=batch_size, shuffle=True)
-
-
-# Train the model
-train(model, train_loader, optimizer, timesteps=timesteps,
-      noise_std=noise_std, epochs=epochs)
-
-
-# After training, visualize the model's performance on a few examples
-model.eval()
-with torch.no_grad():
-    for batch_data, _ in test_loader:
-        batch_data = batch_data.to(device)
-
-        # Take a single example from the batch for visualization
-        original_image = batch_data[0]
-
-        # Perform forward diffusion
-        noisy_data_list = forward_diffusion(
-            original_image.unsqueeze(0), timesteps, noise_std)
-
-        # Use the model to reconstruct the image from the noisy version
-        reconstructed = noisy_data_list[-1]  # Start from the most noisy data
-        for t in reversed(range(timesteps)):
-            reconstructed = model(reconstructed)
-
-        # Visualize original, noisy, and reconstructed images
-        plot_images(original_image, noisy_data_list,
-                    reconstructed, timesteps, 'reconstruct.png')
-
-        # Only plot for the first batch
-        break
-
-
 def generate_image_from_noise(model, timesteps=10, noise_std=0.1):
     """
     Generate an image starting from pure noise using the trained model.
@@ -263,8 +119,155 @@ def plot_generated_image(image: np.ndarray, output_file: str):
     plt.close()
 
 
-# Generate and plot the image
-test_x, _ = next(iter(test_loader))
-test_x = test_x.to(device)
-generated_image = generate_image_from_noise(model, timesteps=10, noise_std=0.1)
-plot_generated_image(generated_image[:16], 'generated.png')
+def train(model: nn.Module,
+          train_loader: DataLoader,
+          optimizer: optim.Optimizer,
+          timesteps=10,
+          noise_std=0.1,
+          epochs=10):
+
+    progress = tqdm(total=epochs * len(train_loader))
+    step = 0
+    for epoch in range(epochs):
+        # train loop
+        model.train()
+        for batch_x, batch_y in train_loader:
+            batch_x = batch_x.to(device).view(batch_x.size(0), -1)
+            batch_y = batch_y.to(device).view(batch_y.size(0), -1)
+            optimizer.zero_grad()
+
+            # Forward diffusion process
+            noisy_data_list = forward_diffusion(
+                batch_x, timesteps, noise_std)
+
+            # Reverse process: predict score function for each timestep
+            total_loss = 0
+            for t in range(timesteps):
+                noisy_data = noisy_data_list[t]
+                predicted_score = model(noisy_data)
+
+                loss = score_matching_loss(
+                    predicted_score, batch_x, noisy_data, noise_std)
+                total_loss += loss
+
+            total_loss.backward()
+            optimizer.step()
+
+            # display progress
+            step += 1
+            progress.set_description(
+                f"Step: {step}, Loss: {total_loss.item():.4f}")
+            progress.update(1)
+
+        # valid loop
+        model.eval()
+        with torch.no_grad():
+            # Generate and plot the image
+            generated_image = generate_image_from_noise(
+                model, timesteps=10, noise_std=0.1)
+            plot_generated_image(
+                generated_image[:16], f"generated_{epoch}.png")
+
+
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    if torch.mps.is_available():
+        return torch.device('mps')
+    return torch.device('cpu')
+
+
+device = get_device()
+
+# Define hyperparameters
+input_dim = 28 * 28  # for example, MNIST data flattened
+hidden_dim = 512
+timesteps = 100
+noise_std = 0.1
+epochs = 10
+batch_size = 128
+learning_rate = 0.001
+
+# Instantiate model and optimizer
+model = ReverseDiffusionNet(input_dim, hidden_dim).to(device)
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+
+# Assume data_loader is predefined for your dataset (e.g., MNIST or CIFAR-10)
+train_loader = DataLoader(
+    datasets.MNIST('./mnist', train=True, download=True,
+                   transform=transforms.ToTensor()),
+    batch_size=batch_size, shuffle=True)
+
+test_loader = DataLoader(
+    datasets.MNIST('./mnist', train=False, download=True,
+                   transform=transforms.ToTensor()),
+    batch_size=batch_size, shuffle=True)
+
+
+# Train the model
+train(model, train_loader, optimizer, timesteps=timesteps,
+      noise_std=noise_std, epochs=epochs)
+
+
+def plot_noise_images(original: np.ndarray,
+                      noisy_list: list[np.ndarray],
+                      reconstructed: np.ndarray,
+                      timesteps: int,
+                      output_file: str):
+    """
+    Plot the original, noisy (at different timesteps), and reconstructed images.
+
+    Args:
+        original: The original image
+        noisy_list: A list of noisy images at different timesteps
+        reconstructed: The reconstructed image by the model
+        timesteps: Number of timesteps in the diffusion process
+    """
+    fig, axes = plt.subplots(1, timesteps + 2, figsize=(15, 2))
+
+    # Plot original image
+    axes[0].imshow(original.view(28, 28).cpu().numpy(), cmap='gray')
+    axes[0].set_title("Original")
+    axes[0].axis('off')
+
+    # Plot noisy images
+    for i in range(timesteps):
+        data = noisy_list[i].view(28, 28).cpu().numpy()
+        axes[i + 1].imshow(data, cmap='gray')
+        axes[i + 1].set_title(f"{i+1}")
+        axes[i + 1].axis('off')
+
+    # Plot reconstructed image
+    axes[-1].imshow(reconstructed.view(28, 28).cpu().numpy(), cmap='gray')
+    axes[-1].set_title("Reconstructed")
+    axes[-1].axis('off')
+
+    fig.savefig(output_file)
+    plt.close()
+
+
+# After training, visualize the model's performance on a few examples
+model.eval()
+with torch.no_grad():
+    for batch_data, _ in test_loader:
+        batch_data = batch_data.to(device)
+
+        # Take a single example from the batch for visualization
+        original_image = batch_data[0]
+
+        # Perform forward diffusion
+        noisy_data_list = forward_diffusion(
+            original_image.unsqueeze(0), timesteps, noise_std)
+
+        # Use the model to reconstruct the image from the noisy version
+        reconstructed = noisy_data_list[-1]  # Start from the most noisy data
+        for t in reversed(range(timesteps)):
+            reconstructed = model(reconstructed)
+
+        # Visualize original, noisy, and reconstructed images
+        plot_noise_images(original_image, noisy_data_list,
+                          reconstructed, timesteps, 'reconstruct.png')
+
+        # Only plot for the first batch
+        break
