@@ -119,6 +119,25 @@ def plot_generated_image(image: np.ndarray, output_file: str):
     plt.close()
 
 
+def plot_train_losses(train_losses, filename='training_loss_plot.png'):
+    """
+    Plot the training losses and save the plot to a file.
+
+    Args:
+        train_losses: List of loss values recorded during training
+        filename: The name of the file to save the plot to
+    """
+    plt.figure(figsize=(8, 6))
+    plt.plot(train_losses, label='Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(filename)
+    plt.close()
+
+
 def train(model: nn.Module,
           train_loader: DataLoader,
           optimizer: optim.Optimizer,
@@ -126,11 +145,15 @@ def train(model: nn.Module,
           noise_std=0.1,
           epochs=10):
 
+    train_losses = []
+
     progress = tqdm(total=epochs * len(train_loader))
     step = 0
+
     for epoch in range(epochs):
         # train loop
         model.train()
+        train_batch_loss = 0
         for batch_x, batch_y in train_loader:
             batch_x = batch_x.to(device).view(batch_x.size(0), -1)
             batch_y = batch_y.to(device).view(batch_y.size(0), -1)
@@ -152,6 +175,7 @@ def train(model: nn.Module,
 
             total_loss.backward()
             optimizer.step()
+            train_batch_loss += total_loss.item()
 
             # display progress
             step += 1
@@ -159,14 +183,19 @@ def train(model: nn.Module,
                 f"Step: {step}, Loss: {total_loss.item():.4f}")
             progress.update(1)
 
-        # valid loop
-        model.eval()
-        with torch.no_grad():
-            # Generate and plot the image
-            generated_image = generate_image_from_noise(
-                model, timesteps=10, noise_std=0.1)
-            plot_generated_image(
-                generated_image[:16], f"generated_{epoch}.png")
+        if epoch % 5 == 0:
+            train_losses.append(train_batch_loss / len(train_loader))
+            plot_train_losses(train_losses)
+
+        if epoch % 10 == 0:
+            # valid loop
+            model.eval()
+            with torch.no_grad():
+                # Generate and plot the image
+                generated_image = generate_image_from_noise(
+                    model, timesteps=timesteps, noise_std=noise_std)
+                plot_generated_image(
+                    generated_image[:16], f"generated_{epoch}.png")
 
 
 def get_device():
@@ -182,11 +211,11 @@ device = get_device()
 # Define hyperparameters
 input_dim = 28 * 28  # for example, MNIST data flattened
 hidden_dim = 512
-timesteps = 100
+timesteps = 20
 noise_std = 0.1
-epochs = 10
-batch_size = 128
-learning_rate = 0.001
+epochs = 10000
+batch_size = 256
+learning_rate = 0.01
 
 # Instantiate model and optimizer
 model = ReverseDiffusionNet(input_dim, hidden_dim).to(device)
