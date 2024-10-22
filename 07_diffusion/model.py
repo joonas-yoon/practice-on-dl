@@ -8,13 +8,13 @@ from tqdm import tqdm
 import numpy as np
 
 
-def forward_diffusion(x: np.ndarray, timesteps: int, noise_std: float = 0.1) -> list[np.ndarray]:
+def forward_diffusion(x: np.ndarray, n_trajectory: int, noise_std: float = 0.1) -> list[np.ndarray]:
     """
-    Perturb the data over timesteps by adding Gaussian noise.
+    Perturb the data over trajectories by adding Gaussian noise.
 
     Args:
         x: Original data
-        timesteps: Number of timesteps for the diffusion
+        n_trajectory: Number of trajectory for the diffusion
         noise_std: Standard deviation of Gaussian noise
 
     Returns:
@@ -22,7 +22,7 @@ def forward_diffusion(x: np.ndarray, timesteps: int, noise_std: float = 0.1) -> 
     """
     noise = torch.randn_like(x) * noise_std
     diffusion_data = [x]
-    for t in range(timesteps):
+    for t in range(n_trajectory):
         x = x + noise
         diffusion_data.append(x)
     return diffusion_data
@@ -33,20 +33,21 @@ class ReverseDiffusionNet(nn.Module):
     Define the reverse process network (Score-based model)
     """
 
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim: int, hidden_dim: int, n_trajectory: int):
         super(ReverseDiffusionNet, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim)
-        )
+        self.t_weights = nn.ParameterList()
+        for _ in range(n_trajectory):
+            layer = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, input_dim)
+            )
+            self.t_weights.append(layer)
 
-    def forward(self, x):
+    def forward(self, x: np.ndarray, t: int):
         # Flatten the input from (batch_size, 28, 28) to (batch_size, 784)
         x = x.view(x.size(0), -1)
-        return self.net(x)
+        return self.t_weights[t](x)
 
 
 def score_matching_loss(predicted_score, true_data, noisy_data, noise_std):
@@ -67,13 +68,13 @@ def score_matching_loss(predicted_score, true_data, noisy_data, noise_std):
     return torch.mean((predicted_score - score) ** 2)
 
 
-def generate_image_from_noise(model, timesteps=10, noise_std=0.1):
+def generate_image_from_noise(model, n_trajectory=10, noise_std=0.1):
     """
     Generate an image starting from pure noise using the trained model.
 
     Args:
         model: The trained reverse diffusion model
-        timesteps: Number of timesteps to reverse the diffusion
+        n_trajectory: Number of n_trajectory to reverse the diffusion
         noise_std: Standard deviation of the initial noise
 
     Returns:
@@ -85,11 +86,11 @@ def generate_image_from_noise(model, timesteps=10, noise_std=0.1):
     model.eval()  # Set model to evaluation mode
     with torch.no_grad():
         # Step 2: Iteratively denoise the image by reversing the diffusion process
-        for t in reversed(range(timesteps)):
+        for t in reversed(range(n_trajectory)):
             # Flatten the noise to match the model input shape (batch_size, 784)
             noise_flat = noise.view(noise.size(0), -1)
             # Predict the denoised image
-            noise_flat = model(noise_flat)
+            noise_flat = model(noise_flat, t=t)
             # Reshape back to image format (batch_size, 1, 28, 28)
             noise = noise_flat.view(noise.size(0), 1, 28, 28)
 
@@ -119,7 +120,7 @@ def plot_generated_image(image: np.ndarray, output_file: str):
     plt.close()
 
 
-def plot_train_losses(train_losses, filename='training_loss_plot.png'):
+def plot_train_losses(train_losses: list[float], filename: str = 'training_loss_plot.png'):
     """
     Plot the training losses and save the plot to a file.
 
@@ -129,6 +130,10 @@ def plot_train_losses(train_losses, filename='training_loss_plot.png'):
     """
     plt.figure(figsize=(8, 6))
     plt.plot(train_losses, label='Training Loss')
+    y_limit_min = np.min(train_losses)
+    y_limit_min -= np.quantile(train_losses, 0.1) - y_limit_min
+    y_limit_max = np.quantile(train_losses, 0.9)
+    plt.ylim((y_limit_min, y_limit_max))
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title('Training Loss Over Time')
@@ -141,7 +146,8 @@ def plot_train_losses(train_losses, filename='training_loss_plot.png'):
 def train(model: nn.Module,
           train_loader: DataLoader,
           optimizer: optim.Optimizer,
-          timesteps=10,
+          scheduler: optim.lr_scheduler.LRScheduler,
+          n_trajectory=10,
           noise_std=0.1,
           epochs=10):
 
@@ -161,13 +167,13 @@ def train(model: nn.Module,
 
             # Forward diffusion process
             noisy_data_list = forward_diffusion(
-                batch_x, timesteps, noise_std)
+                batch_x, n_trajectory, noise_std)
 
             # Reverse process: predict score function for each timestep
             total_loss = 0
-            for t in range(timesteps):
+            for t in range(n_trajectory):
                 noisy_data = noisy_data_list[t]
-                predicted_score = model(noisy_data)
+                predicted_score = model(noisy_data, t=t)
 
                 loss = score_matching_loss(
                     predicted_score, batch_x, noisy_data, noise_std)
@@ -179,23 +185,26 @@ def train(model: nn.Module,
 
             # display progress
             step += 1
-            progress.set_description(
-                f"Step: {step}, Loss: {total_loss.item():.4f}")
+            progress.set_description(f"Epochs: {step / len(train_loader):.2f}, "
+                                     f"Loss: {total_loss.item():.4f}, "
+                                     f"LR: {scheduler.get_last_lr()[-1]:.4f}")
             progress.update(1)
 
-        if epoch % 5 == 0:
-            train_losses.append(train_batch_loss / len(train_loader))
-            plot_train_losses(train_losses)
+        train_losses.append(train_batch_loss / len(train_loader))
+        plot_train_losses(train_losses)
 
-        if epoch % 10 == 0:
+        if epoch % 20 == 0:
             # valid loop
             model.eval()
             with torch.no_grad():
                 # Generate and plot the image
                 generated_image = generate_image_from_noise(
-                    model, timesteps=timesteps, noise_std=noise_std)
+                    model, n_trajectory=n_trajectory, noise_std=noise_std)
                 plot_generated_image(
                     generated_image[:16], f"generated_{epoch}.png")
+
+        # end of epoch
+        scheduler.step()
 
 
 def get_device():
@@ -211,16 +220,16 @@ device = get_device()
 # Define hyperparameters
 input_dim = 28 * 28  # for example, MNIST data flattened
 hidden_dim = 512
-timesteps = 20
+n_trajectory = 20
 noise_std = 0.1
-epochs = 10000
+epochs = 2000
 batch_size = 256
-learning_rate = 0.01
+learning_rate = 0.001
 
 # Instantiate model and optimizer
-model = ReverseDiffusionNet(input_dim, hidden_dim).to(device)
+model = ReverseDiffusionNet(input_dim, hidden_dim, n_trajectory).to(device)
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=12, gamma=0.95)
 
 # Assume data_loader is predefined for your dataset (e.g., MNIST or CIFAR-10)
 train_loader = DataLoader(
@@ -235,25 +244,25 @@ test_loader = DataLoader(
 
 
 # Train the model
-train(model, train_loader, optimizer, timesteps=timesteps,
-      noise_std=noise_std, epochs=epochs)
+train(model, train_loader, optimizer, scheduler,
+      n_trajectory=n_trajectory, noise_std=noise_std, epochs=epochs)
 
 
 def plot_noise_images(original: np.ndarray,
                       noisy_list: list[np.ndarray],
                       reconstructed: np.ndarray,
-                      timesteps: int,
+                      n_trajectory: int,
                       output_file: str):
     """
-    Plot the original, noisy (at different timesteps), and reconstructed images.
+    Plot the original, noisy (at different trajectory), and reconstructed images.
 
     Args:
         original: The original image
-        noisy_list: A list of noisy images at different timesteps
+        noisy_list: A list of noisy images at different trajectory
         reconstructed: The reconstructed image by the model
-        timesteps: Number of timesteps in the diffusion process
+        n_trajectory: Number of trajectory in the diffusion process
     """
-    fig, axes = plt.subplots(1, timesteps + 2, figsize=(15, 2))
+    fig, axes = plt.subplots(1, n_trajectory + 2, figsize=(15, 2))
 
     # Plot original image
     axes[0].imshow(original.view(28, 28).cpu().numpy(), cmap='gray')
@@ -261,7 +270,7 @@ def plot_noise_images(original: np.ndarray,
     axes[0].axis('off')
 
     # Plot noisy images
-    for i in range(timesteps):
+    for i in range(n_trajectory):
         data = noisy_list[i].view(28, 28).cpu().numpy()
         axes[i + 1].imshow(data, cmap='gray')
         axes[i + 1].set_title(f"{i+1}")
@@ -287,16 +296,16 @@ with torch.no_grad():
 
         # Perform forward diffusion
         noisy_data_list = forward_diffusion(
-            original_image.unsqueeze(0), timesteps, noise_std)
+            original_image.unsqueeze(0), n_trajectory, noise_std)
 
         # Use the model to reconstruct the image from the noisy version
         reconstructed = noisy_data_list[-1]  # Start from the most noisy data
-        for t in reversed(range(timesteps)):
-            reconstructed = model(reconstructed)
+        for t in reversed(range(n_trajectory)):
+            reconstructed = model(reconstructed, t=t)
 
         # Visualize original, noisy, and reconstructed images
         plot_noise_images(original_image, noisy_data_list,
-                          reconstructed, timesteps, 'reconstruct.png')
+                          reconstructed, n_trajectory, 'reconstruct.png')
 
         # Only plot for the first batch
         break
